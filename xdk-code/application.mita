@@ -1,0 +1,193 @@
+/*
+ * Copyright (C) 2021 Manuel Witkowski (manuel@wit-mail.de) - All Rights Reserved
+ */
+
+package main;
+import platforms.xdk110;
+
+// ----------------------
+// -- Custom Config START
+var macAddress : string = "<MAC-ADDRESS>";
+setup wifi : WLAN {
+    authentication = Personal(psk="<WIFIKEY>");
+    ssid = "<WIFISSID>";
+}
+setup azureFunction : HttpRestClient {
+  transport = wifi;
+  endpointBase = 'http://func-dev-xdk.azurewebsites.net/api';
+  headerContent = 'Host: func-dev-xdk.azurewebsites.net';
+  var ingress = resource(endpoint='/func-measurement-ingress?code=<AZ-FUNCTION-KEY>', writeMethod=POST, contentType="application/json");
+}
+// -- Custom Config END
+// --------------------
+
+var sendData = true;
+var tempCorrection : double = 6.5975; // -- correction factor for the heat output of a typical running XDK application
+
+setup XDK110 {
+  applicationName = "AzureFunctionsExporter";
+  startupDelay = 3000;  // -- wait 3 seconds before initialization 
+}
+
+// -- setup of the BME280 environmental sensor
+setup environment {
+    power_mode = Normal;
+    standby_time = 1000; // ms
+    temperature_oversampling = OVERSAMPLE_1X;
+}
+
+// -- setup of the leds
+setup led : LED {
+    var red = light_up(Red); 		// -- only lights up in case of unexpected exceptions
+    var yellow = light_up(Yellow);	// -- flashing (standby) or permanent (XDK active and sending data to Azure)
+}
+
+// // -- setup MAX44009 light sensor
+setup light {
+    manual_mode = false;
+}
+
+// && - setup BMA280 accelerometer
+setup accelerometer {
+    bandwidth = BW_500Hz;
+    range = Range_8G;       // 8G range convienently does not require a conversion into mg
+}
+
+// -- setup of button one => activate data publishing
+every button_one.pressed {
+	sendData = true;
+	println("Publishing to Azure Functions.");
+}
+
+// -- setup of button two => deactivate data publishing
+every button_two.pressed {
+	sendData = false;
+	println("Not publishing to Azure Functions.");
+}
+
+fn getTemperature() : double {
+	var temp : double = environment.temperature.read()/1000.0;
+    temp = temp - tempCorrection;
+    return round(temp*100)/100.0;
+}
+
+fn getHumidity() : uint32 {
+    return environment.humidity.read();
+}
+
+fn getPressure() : double {
+	var pres : double = environment.pressure.read()/1000.0;
+	return round(pres*100)/100.0;
+}
+
+fn getLight() : double {
+	var light : double = light.intensity.read()/1000.00;
+	return round(light*100)/100.0;
+}
+
+fn getXAcceleration() : int32 {
+    return  accelerometer.x_axis.read();
+}
+
+fn getYAcceleration() : int32 {
+    return  accelerometer.y_axis.read();
+}
+
+fn getZAcceleration() : int32 {
+    return  accelerometer.z_axis.read();
+}
+
+fn getXGyro() : int32 {
+    return  gyroscope.x_axis.read();
+}
+
+fn getYGyro() : int32 {
+    return   gyroscope.y_axis.read();
+}
+
+fn getZGyro() : int32 {
+    return gyroscope.z_axis.read();
+}
+
+native unchecked fn round(n : double) : int32
+	header "math.h";
+	
+fn toString(d: double) : string {
+	return `${d}`;
+}
+
+fn toString(i: int32) : string {
+	return `${i}`;
+}
+
+fn sendDataToAzure() : void {
+	
+	// -- unfortunately Eclipse Mita doesn't support sprintf
+	// -- returning non-primitive values from custom functions is also 'experimental' and 
+	// -- in my case resulted in invalid C-code.
+	
+	var jsonString : string = '{';
+
+	jsonString += ' "temperature": ';
+	jsonString += toString(getTemperature());
+	
+	jsonString += ', "humidity": ';
+	jsonString += toString(getHumidity());
+	
+	jsonString += ', "pressure": ';
+	jsonString += toString(getPressure());
+	
+	jsonString += ', "light": ';
+	jsonString += toString(getLight());
+	
+	jsonString += ', "acc_x": ';
+	jsonString += toString(getXAcceleration());
+	
+	jsonString += ', "acc_y": ';
+	jsonString += toString(getYAcceleration());
+	
+	jsonString += ', "acc_z": ';
+	jsonString += toString(getZAcceleration());
+	
+	jsonString += ', "gyro_x": ';
+	jsonString += toString(getXGyro());
+	
+	jsonString += ', "gyro_y": ';
+	jsonString += toString(getYGyro());
+	
+	jsonString += ', "gyro_z": ';
+	jsonString += toString(getZGyro());
+	
+	jsonString += ', "device-id": ';
+	jsonString += '"';
+	jsonString += macAddress;
+	jsonString += '"';
+	
+	jsonString += '}';
+	
+	println(jsonString);
+	azureFunction.ingress.write(jsonString);
+}
+
+// -- Status light
+every 1 seconds {
+	if (sendData){
+		led.yellow.write(true);
+	} else {
+		led.yellow.write(!led.yellow.read());
+	}
+}
+
+// -- Main loop
+every 10 seconds {
+	if (sendData) {
+	   	try {
+	   		sendDataToAzure();
+	   		led.red.write(false);
+	   	}
+	   	catch(Exception) {
+	   		led.red.write(true);
+	   		println("Exception during Azure Function call.");
+	   	}	
+	}
+}

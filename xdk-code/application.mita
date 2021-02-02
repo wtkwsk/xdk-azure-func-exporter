@@ -23,6 +23,9 @@ setup azureFunction : HttpRestClient {
 
 var sendData = true;
 var tempCorrection : double = 6.5975; // -- correction factor for the heat output of a typical running XDK application
+var maxXGyro : int32 = 0;
+var maxYGyro : int32 = 0;
+var maxZGyro : int32 = 0;
 
 setup XDK110 {
   applicationName = "AzureFunctionsExporter";
@@ -150,13 +153,13 @@ fn sendDataToAzure() : void {
 	jsonString += toString(getZAcceleration());
 	
 	jsonString += ', "gyro_x": ';
-	jsonString += toString(getXGyro());
+	jsonString += toString(maxXGyro);
 	
 	jsonString += ', "gyro_y": ';
-	jsonString += toString(getYGyro());
+	jsonString += toString(maxYGyro);
 	
 	jsonString += ', "gyro_z": ';
-	jsonString += toString(getZGyro());
+	jsonString += toString(maxZGyro);
 	
 	jsonString += ', "device-id": ';
 	jsonString += '"';
@@ -167,6 +170,10 @@ fn sendDataToAzure() : void {
 	
 	println(jsonString);
 	azureFunction.ingress.write(jsonString);
+	
+	maxXGyro = 0;
+	maxYGyro = 0;
+	maxZGyro = 0;
 }
 
 // -- Status light
@@ -175,6 +182,24 @@ every 1 seconds {
 		led.yellow.write(true);
 	} else {
 		led.yellow.write(!led.yellow.read());
+	}
+}
+
+// -- Gyro sampling
+every 100 milliseconds {
+	if (sendData){
+		var x = getXGyro();
+		if (x > maxXGyro) {
+			maxXGyro = x;
+		}
+		var y = getYGyro();
+		if (y > maxYGyro) {
+			maxYGyro = y;
+		}
+		var z = getZGyro();
+		if (z > maxZGyro) {
+			maxZGyro = z;
+		}
 	}
 }
 
